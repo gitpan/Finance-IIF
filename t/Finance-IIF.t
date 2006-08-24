@@ -4,7 +4,8 @@
 
 use strict;
 use warnings;
-use Test::More tests => 29;
+use Test::More tests => 32;
+use File::Temp;
 
 BEGIN { use_ok("Finance::IIF") or exit; }
 
@@ -17,25 +18,51 @@ my $testfile = "t/sample.iif";
     my $obj = $package->new;
     isa_ok( $obj, $package );
 
-    is( $obj->{debug}, 0, "default debug value" );
+    is( $obj->{debug},           0,    "default debug value" );
+    is( $obj->{autodetect},      0,    "default autodetect value" );
     is( $obj->{field_separator}, "\t", "default field separator" );
-    is( $obj->{input_record_separator}, $/, "default input record separator" );
-    is( $obj->{output_record_separator}, $\,
-        "default output record separator" );
+    is( $obj->record_separator,  $/,   "default record separator" );
 
     $obj = $package->new(
-        debug                   => 1,
-        field_separator         => ",",
-        input_record_separator  => "X\rX\n",
-        output_record_separator => "X\rX\n"
+        debug            => 1,
+        field_separator  => ",",
+        record_separator => "X\rX\n",
     );
 
-    is( $obj->{debug},           1,   "custom debug value" );
-    is( $obj->{field_separator}, ",", "custom field separator" );
-    is( $obj->{input_record_separator},
-        "X\rX\n", "custom input record separator" );
-    is( $obj->{output_record_separator},
-        "X\rX\n", "custom output record separator" );
+    is( $obj->{debug},           1,        "custom debug value" );
+    is( $obj->{field_separator}, ",",      "custom field separator" );
+    is( $obj->record_separator,  "X\rX\n", "custom record separator" );
+}
+
+{    # autodetect
+    my ( $fh, $obj );
+
+    $fh = File::Temp->new;
+    $fh->close;
+
+    $obj = $package->new( file => $fh->filename, autodetect => 1 );
+    is( $obj->record_separator, $/, "autodetect default record separator" );
+
+    $fh = File::Temp->new;
+    print( $fh "Testing Windows\r\n" );
+    $fh->close;
+
+    $obj = $package->new( file => $fh->filename, autodetect => 1 );
+    is( $obj->record_separator, "\r\n", "autodetect windows record separator" );
+
+    $fh = File::Temp->new;
+    print( $fh "Testing Mac\r" );
+    $fh->close;
+
+    $obj = $package->new( file => $fh->filename, autodetect => 1 );
+    is( $obj->record_separator, "\r", "autodetect mac record separator" );
+
+    $fh = File::Temp->new;
+    print( $fh "Testing Unix\n" );
+    $fh->close;
+
+    $obj = $package->new( file => $fh->filename, autodetect => 1 );
+    is( $obj->record_separator, "\n", "autodetect unix record separator" );
 }
 
 {    # file
@@ -79,7 +106,8 @@ my $testfile = "t/sample.iif";
     like( $@, qr/^No file specified/, "open without a file croaks" );
 
     $obj = $package->new;
-    is( ref $obj->open($testfile), "IO::File", "open returns IO::File object" );
+    eval { $obj->open($testfile) };
+    is( $@, "", "open with file does not die" );
 }
 
 {    # _parseline

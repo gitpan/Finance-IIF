@@ -6,7 +6,7 @@ use warnings;
 use Carp;
 use IO::File;
 
-our $VERSION = '0.03.01';
+our $VERSION = '0.20.01';
 $VERSION = eval $VERSION;
 
 sub new {
@@ -14,12 +14,15 @@ sub new {
     my %opt   = @_;
     my $self  = {};
 
-    $self->{debug}                   = $opt{debug}                   || 0;
-    $self->{field_separator}         = $opt{field_separator}         || "\t";
-    $self->{input_record_separator}  = $opt{input_record_separator}  || $/;
-    $self->{output_record_separator} = $opt{output_record_separator} || $\;
+    $self->{debug}           = $opt{debug}           || 0;
+    $self->{autodetect}      = $opt{autodetect}      || 0;
+    $self->{field_separator} = $opt{field_separator} || "\t";
 
     bless( $self, $class );
+
+    if ( $opt{record_separator} ) {
+        $self->record_separator( $opt{record_separator} );
+    }
 
     if ( $opt{file} ) {
         $self->file( $opt{file} );
@@ -40,6 +43,14 @@ sub file {
     else {
         return undef;
     }
+}
+
+sub record_separator {
+    my $self = shift;
+    if (@_) {
+        $self->{record_separator} = $_[0] if ( $_[0] );
+    }
+    return $self->{record_separator} || $/;
 }
 
 sub _filehandle {
@@ -63,6 +74,22 @@ sub open {
     }
     if ( $self->file ) {
         $self->_filehandle( $self->file );
+        if ( $self->{autodetect} ) {
+            if ( $self->_filehandle->seek( -2, 2 ) ) {
+                my $buffer = "";
+                $self->_filehandle->read( $buffer, 2 );
+                if ( $buffer eq "\r\n" ) {
+                    $self->record_separator("\r\n");
+                }
+                elsif ( $buffer =~ /\n$/ ) {
+                    $self->record_separator("\n");
+                }
+                elsif ( $buffer =~ /\r$/ ) {
+                    $self->record_separator("\r");
+                }
+            }
+        }
+        $self->reset();
     }
     else {
         croak("No file specified");
@@ -177,7 +204,7 @@ sub _parseline {
 
 sub _getline {
     my $self = shift;
-    local $/ = $self->{input_record_separator};
+    local $/ = $self->record_separator;
     my $line = $self->_filehandle->getline;
     chomp($line);
     $self->{_linecount}++;
@@ -197,7 +224,6 @@ sub _warning {
 sub reset {
     my $self = shift;
     $self->_filehandle->seek( 0, 0 );
-    $self->next;
 }
 
 sub close {
@@ -206,6 +232,7 @@ sub close {
 }
 
 1;
+
 __END__
 
 =head1 NAME
@@ -219,9 +246,9 @@ Finance::IIF - Parse and create IIF files for QuickBooks
   my $iif = Finance::IIF->new( file => "test.iif" );
   
   while ( my $record = $iif->next ) {
-      print( "Header: " . $record->{header} . "\n" );
+      print( "Header: ", $record->{header}, "\n" );
       foreach my $key ( keys %{$record} ) {
-          print( "     " . $key . ": " . $record->{$key} . "\n" );
+          print( "     ", $key, ": ", $record->{$key}, "\n" );
       }
   }
 
@@ -587,23 +614,47 @@ If the file is specified it will be opened on new.
 
 =item file
 
-Specifies file to use for processing.  See L</file()> for details.
+Specifies file to use for processing.  See L<file()|/file__> for details.
 
   my $in = Finance::IIF->new( file => "myfile" );
 OR
   my $in = Finance::IIF->new( file => [ "myfile", "<:crlf" ] );
 
-=item input_record_separator
+=item record_separator
 
-Can be used to redefine the IIF input record separator.  Default is $/.
+Can be used to redefine the IIF record separator.  Default is $/.
 
-  my $in = Finance::IIF->new( input_record_separator => "\n" );
+  my $in = Finance::IIF->new( record_separator => "\n" );
 
-=item output_record_separator
+Note: For MacOS X it may be necessary to change this to "\r".  See
+L</autodetect> for another option.
 
-Can be used to redefine the IIF output record separator.  Default is $\.
+=item autodetect
 
-  my $out = Finance::IIF->new( output_record_separator => "\n" );
+Enable auto detection of the record separator based on the file
+contents.  Default is "0".
+
+  my $in = Finance::IIF->new( autodetect => 1 );
+
+Perl uses $/ to define line separators for text files.  Perl sets this
+value according to the OS perl is running on:
+
+  Windows="\r\n"
+  Mac="\r"
+  Unix="\n"
+
+In many cases you may find yourself with text files that do not match
+the OS.  In these cases Finance::IIF by default will not process that
+IIF file correctly. This feature is an attempt to help with the most
+common cases of having the wrong text file for the OS Finance::IIF is
+running on.
+
+This feature depends on being able to seek to the end of the file and
+reading the last 2 characters to determine the proper separator. If a
+seek can not be performed or the last 2 characters are not a proper
+separator the record_separator will default to $/ or the value passed
+in. If a valid record_separator is found then it will be set according
+to what was in the file.
 
 =item debug
 
@@ -618,7 +669,7 @@ Can be used to output debug information.  Default is "0".
 Specify file name and optionally additional parameters that will be
 used to obtain a filehandle.  The argument can be a filename (SCALAR)
 an ARRAY reference or an ARRAY whose values must be valid arguments
-for passing to L<IO::File/new>.
+for passing to IO::File->new.
 
   $iif->file("myfile");
  OR
@@ -626,13 +677,22 @@ for passing to L<IO::File/new>.
  OR
   $iif->file( "myfile", "<:crlf" );
 
+=head2 record_separator()
+
+Returns the currently used record_separator.  This is used primarly in
+situations where you open a IIF file with autodetect and then want to
+write out a IIF file in the same format.
+
+  my $iif = Finance::IIF->new( file => "input.iif", autodetect => 1 );
+  my $rs  = $iif->record_separator;
+
 =head2 open()
 
 Open already specified file.
 
   $iif->open();
 
-Opens specified file using L</file()>.
+Open also supports the same arguments as L<file()|/file__>.
 
   $iif->open("myfile");
 
@@ -685,7 +745,7 @@ Matthew McGillis E<lt>matthew@mcgillis.orgE<gt> L<http://www.mcgillis.org/>
 
 Phil Lobbes E<lt>phil at perkpartners dot comE<gt>
 
-Project maintaned at L<http://www.sourceforge.net/projects/finance-iif>
+Project maintaned at L<http://sourceforge.net/projects/finance-iif>
 
 =head1 COPYRIGHT
 
