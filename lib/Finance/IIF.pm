@@ -3,10 +3,10 @@ package Finance::IIF;
 use 5.006;
 use strict;
 use warnings;
-use Carp;
-use IO::File;
+use Carp qw(carp croak);
+use IO::File ();
 
-our $VERSION = '0.20.01';
+our $VERSION = '0.21_02';
 $VERSION = eval $VERSION;
 
 sub new {
@@ -60,6 +60,7 @@ sub _filehandle {
         $self->{_filehandle} = IO::File->new(@args)
           or croak("Failed to open file '$args[0]': $!");
         $self->{_linecount} = 0;
+        $self->{_filehandle}->binmode();
     }
     if ( !$self->{_filehandle} ) {
         croak("No filehandle available");
@@ -78,14 +79,14 @@ sub open {
             if ( $self->_filehandle->seek( -2, 2 ) ) {
                 my $buffer = "";
                 $self->_filehandle->read( $buffer, 2 );
-                if ( $buffer eq "\r\n" ) {
-                    $self->record_separator("\r\n");
+                if ( $buffer eq "\015\012" ) {
+                    $self->record_separator("\015\012");
                 }
-                elsif ( $buffer =~ /\n$/ ) {
-                    $self->record_separator("\n");
+                elsif ( $buffer =~ /\012$/ ) {
+                    $self->record_separator("\012");
                 }
-                elsif ( $buffer =~ /\r$/ ) {
-                    $self->record_separator("\r");
+                elsif ( $buffer =~ /\015$/ ) {
+                    $self->record_separator("\015");
                 }
             }
         }
@@ -103,9 +104,26 @@ sub next {
     if ( $self->_filehandle->eof ) {
         return undef;
     }
+    my $line;
     while ( !$self->_filehandle->eof && $continue ) {
-        my $line = $self->_getline;
-        next if ( $line =~ /^\s*$/ );
+
+        # IIF files sometimes contain embedded record_separators so if
+        # the previous line didn't have enough fields keep adding to it
+        if ( $self->{_need_more} ) {
+            if ( $self->{_need_more} > 8 ) {
+                $self->_warning("Giving up trying to get next record");
+                delete $self->{_need_more};
+                $continue = 0;
+            }
+            else {
+                $line .= $self->record_separator . $self->_getline;
+            }
+        }
+        else {
+            $line = $self->_getline;
+            next if ( $line =~ /^\s*$/ );
+        }
+
         my @data = $self->_parseline($line);
 
         if ( $self->{debug} > 1 ) {
@@ -120,7 +138,6 @@ sub next {
             $self->{headerfields} = \@data;
         }
         elsif ( $data[0] eq $self->{header} ) {
-            $continue = 0;
             $object{header} = shift(@data);
             my $num_hdr = scalar( @{ $self->{headerfields} } );
             my $num_dat = scalar(@data);
@@ -128,6 +145,10 @@ sub next {
             # have seen IIF timer data where last column (USEID) was
             # missing but QuickBooks imports the data without error
             if ( $num_dat < ( $num_hdr - 1 ) ) {
+                $self->{_need_more}++;
+            }
+            elsif ( $num_dat > $num_hdr ) {
+                $self->{_need_more} = $continue = 0;
                 no warnings 'uninitialized';
                 $self->_warning( "parse error: found $num_dat fields but"
                       . " expected $num_hdr." );
@@ -143,6 +164,7 @@ sub next {
                 );
             }
             else {
+                $self->{_need_more} = $continue = 0;
                 for ( my $i = 0 ; $i <= $#{ $self->{headerfields} } ; $i++ ) {
                     my $val = defined( $data[$i] ) ? $data[$i] : "";
                     $object{ $self->{headerfields}[$i] } = $val;
@@ -168,27 +190,27 @@ sub _parseline {
     my $sep  = $self->{field_separator} || "\t";
     my @data;
     while ( defined $line ) {
-        if ( $line =~ /^"(.*?)(?:[^\\]["])[$sep](.*)/ ) {
+        if ( $line =~ /^"(.*?)(?:[^\\]["])[$sep](.*)/s ) {
             warn("parse1: data($1) line($2)\n") if ( $self->{debug} > 2 );
             $line = $2;
             push( @data, $1 );
         }
-        elsif ( $line =~ /^([^$sep]+)[$sep](.*)/ ) {
+        elsif ( $line =~ /^([^$sep]+)[$sep](.*)/s ) {
             warn("parse2: data($1) line($2)\n") if ( $self->{debug} > 2 );
             $line = $2;
             push( @data, $1 );
         }
-        elsif ( $line =~ /^[$sep](.*)/ ) {
+        elsif ( $line =~ /^[$sep](.*)/s ) {
             warn("parse3: data() line($1)\n") if ( $self->{debug} > 2 );
             $line = $1;
             push( @data, "" );
         }
-        elsif ( $line =~ /^"(.*?)(?:[^\\]["])$/ ) {
+        elsif ( $line =~ /^"(.*?)(?:[^\\]["])$/s ) {
             warn("parse4: data($1) line()\n") if ( $self->{debug} > 2 );
             $line = undef;
             push( @data, $1 );
         }
-        elsif ( $line =~ /^(.+)$/ ) {
+        elsif ( $line =~ /^(.+)$/s ) {
             warn("parse5: data($1) line()\n") if ( $self->{debug} > 2 );
             $line = undef;
             push( @data, $1 );
@@ -206,8 +228,8 @@ sub _getline {
     my $self = shift;
     local $/ = $self->record_separator;
     my $line = $self->_filehandle->getline;
-    chomp($line);
     $self->{_linecount}++;
+    chomp($line);
     return $line;
 }
 
@@ -306,7 +328,7 @@ will do any additional processing or validation as required.
           INVMEMO
           SADDR1
           SADDR2
- category                  L                 
+ category                  L
 
 QuickBooks doesn't support investment accounts Quicken does.
 
@@ -614,7 +636,7 @@ If the file is specified it will be opened on new.
 
 =item file
 
-Specifies file to use for processing.  See L<file()|/file__> for details.
+Specifies file to use for processing.  See L<file()|/file()> for details.
 
   my $in = Finance::IIF->new( file => "myfile" );
 OR
@@ -624,10 +646,10 @@ OR
 
 Can be used to redefine the IIF record separator.  Default is $/.
 
-  my $in = Finance::IIF->new( record_separator => "\n" );
+  my $in = Finance::IIF->new( record_separator => "\012" );
 
-Note: For MacOS X it may be necessary to change this to "\r".  See
-L</autodetect> for another option.
+Note: For MacOS X it may be necessary to change this to "\015".  See
+L<autodetect|/autodetect> for another option.
 
 =item autodetect
 
@@ -639,9 +661,9 @@ contents.  Default is "0".
 Perl uses $/ to define line separators for text files.  Perl sets this
 value according to the OS perl is running on:
 
-  Windows="\r\n"
-  Mac="\r"
-  Unix="\n"
+  Windows="\015\012"
+  Mac="\015"
+  Unix="\012"
 
 In many cases you may find yourself with text files that do not match
 the OS.  In these cases Finance::IIF by default will not process that
@@ -692,7 +714,7 @@ Open already specified file.
 
   $iif->open();
 
-Open also supports the same arguments as L<file()|/file__>.
+Open also supports the same arguments as L<file()|/file()>.
 
   $iif->open("myfile");
 
@@ -737,7 +759,7 @@ Test cases for IIF parsing
 
 =head1 SEE ALSO
 
-L<Carp>, L<IO::File>
+L<Carp|Carp>, L<IO::File|IO::File>
 
 =head1 AUTHORS
 
@@ -745,12 +767,16 @@ Matthew McGillis E<lt>matthew@mcgillis.orgE<gt> L<http://www.mcgillis.org/>
 
 Phil Lobbes E<lt>phil at perkpartners dot comE<gt>
 
-Project maintaned at L<http://sourceforge.net/projects/finance-iif>
+Project maintained at L<http://sourceforge.net/projects/finance-iif>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2006 by Matthew McGillis and Phil Lobbes.  All rights
-reserved.  This library is free software; you can redistribute it
-and/or modify it under the same terms as Perl itself.
+Copyright (C) 2006-2007 by Matthew McGillis and Phil Lobbes.  All
+rights reserved.
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
 
 =cut

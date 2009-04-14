@@ -1,10 +1,15 @@
 Revision history for Perl extension Finance::IIF.
 
-0.02.01  Tue Feb  7 23:02:23 EST 2006
-	- initial release of module on sourceforge
-0.03.01  Tue May 23 00:54:00 EDT 2006
-	- initial release of module on CPAN
+0.21_02  Tue Apr 14 18:28:13 EDT 2009
+	- use binmode and code separators via perlport recommendations
+	- update next() to try to handle multi-line "note" data better
+0.21_01  Mon Feb 19 11:19:44 EST 2007
+	- use //s in parsing as QB timer will allow a multi-line "note"
 0.20.01  Wed Aug 23 00:26:49 EDT 2006
 	- Added autodetect option and related test cases
 	- Fixed bug that could caused wrong separator to be used
 	- Changed separator support to use a single record_separator
+0.03.01  Tue May 23 00:54:00 EDT 2006
+	- initial release of module on CPAN
+0.02.01  Tue Feb  7 23:02:23 EST 2006
+	- initial release of module on sourceforge

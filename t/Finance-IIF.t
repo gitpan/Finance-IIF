@@ -5,7 +5,7 @@
 use strict;
 use warnings;
 use Test::More tests => 32;
-use File::Temp;
+use File::Temp qw(tempfile);
 
 BEGIN { use_ok("Finance::IIF") or exit; }
 
@@ -35,34 +35,34 @@ my $testfile = "t/sample.iif";
 }
 
 {    # autodetect
-    my ( $fh, $obj );
+    my ( $fh, $fn, $obj );
 
-    $fh = File::Temp->new;
-    $fh->close;
+    ( $fh, $fn ) = tempfile();
+    close($fh);
 
-    $obj = $package->new( file => $fh->filename, autodetect => 1 );
+    $obj = $package->new( file => $fn, autodetect => 1 );
     is( $obj->record_separator, $/, "autodetect default record separator" );
 
-    $fh = File::Temp->new;
-    print( $fh "Testing Windows\r\n" );
-    $fh->close;
+    ( $fh, $fn ) = tempfile();
+    print( $fh "Testing Windows\015\012" );
+    close($fh);
 
-    $obj = $package->new( file => $fh->filename, autodetect => 1 );
-    is( $obj->record_separator, "\r\n", "autodetect windows record separator" );
+    $obj = $package->new( file => $fn, autodetect => 1 );
+    is( $obj->record_separator, "\015\012", "autodetect windows record separator" );
 
-    $fh = File::Temp->new;
-    print( $fh "Testing Mac\r" );
-    $fh->close;
+    ( $fh, $fn ) = tempfile();
+    print( $fh "Testing Mac\015" );
+    close($fh);
 
-    $obj = $package->new( file => $fh->filename, autodetect => 1 );
-    is( $obj->record_separator, "\r", "autodetect mac record separator" );
+    $obj = $package->new( file => $fn, autodetect => 1 );
+    is( $obj->record_separator, "\015", "autodetect mac record separator" );
 
-    $fh = File::Temp->new;
-    print( $fh "Testing Unix\n" );
-    $fh->close;
+    ( $fh, $fn ) = tempfile();
+    print( $fh "Testing Unix\012" );
+    close($fh);
 
-    $obj = $package->new( file => $fh->filename, autodetect => 1 );
-    is( $obj->record_separator, "\n", "autodetect unix record separator" );
+    $obj = $package->new( file => $fn, autodetect => 1 );
+    is( $obj->record_separator, "\012", "autodetect unix record separator" );
 }
 
 {    # file
